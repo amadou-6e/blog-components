@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What Neo4j actually does and how it fits into a GraphRAG pipeline</title>
+  <meta name="description" content="Neo4j, GraphRAG, and LlamaIndex: what the graph database stores, why it fits traversal-heavy retrieval, and how the pipeline works.">
+  <style>
+    :root {
+      color-scheme: light;
+    }
+    body {
+      margin: 0;
+      background: #f7f7f5;
+      color: #1a1a1a;
+      font-family: Georgia, "Times New Roman", serif;
+      line-height: 1.7;
+    }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 48px 24px 96px;
+      background: #ffffff;
+      box-sizing: border-box;
+    }
+    h1, h2, h3 {
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.25;
+      color: #111111;
+    }
+    h1 {
+      font-size: 2.3rem;
+      margin: 0 0 1.5rem;
+    }
+    h2 {
+      font-size: 1.55rem;
+      margin-top: 3rem;
+      margin-bottom: 1rem;
+    }
+    p, li {
+      font-size: 1.08rem;
+    }
+    img {
+      display: block;
+      width: 100%;
+      height: auto;
+      margin: 1.75rem 0 0.5rem;
+      border-radius: 6px;
+    }
+    pre {
+      overflow-x: auto;
+      background: #f6f8fa;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 16px 18px;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    code {
+      font-family: Consolas, "SFMono-Regular", Menlo, monospace;
+    }
+    p code, li code {
+      background: #f3f4f6;
+      padding: 0.12rem 0.35rem;
+      border-radius: 4px;
+      font-size: 0.92em;
+    }
+    hr {
+      border: 0;
+      border-top: 1px solid #e5e7eb;
+      margin: 2rem 0;
+    }
+    blockquote {
+      margin: 1.5rem 0;
+      padding-left: 1rem;
+      border-left: 3px solid #d1d5db;
+      color: #4b5563;
+    }
+    ul, ol {
+      padding-left: 1.5rem;
+    }
+    a {
+      color: #0f766e;
+    }
+  </style>
+</head>
+<body>
+  <main>
+<h1>What Neo4j actually does and how it fits into a GraphRAG pipeline (with a working LlamaIndex example)</h1>
+<p>Every LlamaIndex GraphRAG tutorial starts the same way. Before the first useful Python line, there is a <code>docker run</code> command for Neo4j. That makes Neo4j feel like plumbing, not part of the retrieval design.</p>
+<p><img alt="What Neo4j actually does - hero banner" src="https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/002_neo4j_llamaindex/images/title.png"></p>
+<p>That framing is backwards. If your questions are relational, the storage layer is not incidental. It determines whether the retrieval system can follow the path the answer depends on. This post explains what Neo4j actually stores, why that storage model fits knowledge graphs better than a relational database for traversal-heavy queries, and how the LlamaIndex integration turns that graph into a working GraphRAG pipeline. Here, GraphRAG means a retrieval pipeline that uses both text artifacts and graph structure, so the system can answer questions about relationships between entities instead of only returning semantically similar passages.</p>
+<hr>
+<h2>The property graph model: what Neo4j actually stores</h2>
+<p><strong><em>Neo4j stores a property graph, not tables that get reconstructed into a graph later.</em></strong></p>
+<p>In Neo4j's data model, a graph is made of <strong>nodes</strong>, <strong>relationships</strong>, and <strong>properties</strong>. Neo4j's own getting-started docs define graph databases in exactly those terms: data is stored as nodes, relationships, and properties rather than as tables or documents (<a href="https://neo4j.com/docs/getting-started/graph-database/">Neo4j Docs</a>). That structure matters because GraphRAG questions are usually about entities plus typed links between them, not about isolated records.</p>
+<p>That model has four parts:</p>
+<ol>
+<li><strong>Nodes</strong> represent entities such as papers, researchers, institutions, or topics.</li>
+<li><strong>Relationships</strong> are directed, typed connections between nodes, such as <code>CITES</code> or <code>AUTHORED_BY</code>.</li>
+<li><strong>Properties</strong> are key-value pairs attached to either nodes or relationships.</li>
+<li><strong>Labels and relationship types</strong> tell Neo4j what kind of thing each record is, and they support indexing and constraints.</li>
+</ol>
+<p>In practice, that looks like this:</p>
+<div class="codehilite"><pre><span></span><code><span class="p">(</span><span class="n">p</span><span class="p">:</span><span class="n">Paper</span><span class="w"> </span><span class="p">{</span><span class="n">openalex_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;W123&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Attention Is All You Need&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">year</span><span class="p">:</span><span class="w"> </span><span class="m">2017</span><span class="p">})</span>
+<span class="p">(</span><span class="n">paper</span><span class="p">)</span><span class="o">-[</span><span class="p">:</span><span class="n">CITES</span><span class="w"> </span><span class="p">{</span><span class="n">source</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;openalex&quot;</span><span class="p">}</span><span class="o">]-&gt;</span><span class="p">(</span><span class="n">other_paper</span><span class="p">)</span>
+</code></pre></div>
+
+<p>The query language for that model is <strong>Cypher</strong>, Neo4j's pattern-matching language. The <code>MATCH</code> clause lets you describe the pattern you want the database to traverse (<a href="https://neo4j.com/docs/cypher-manual/current/clauses/match/">Cypher Manual</a>):</p>
+<div class="codehilite"><pre><span></span><code><span class="k">MATCH</span><span class="w"> </span><span class="p">(</span><span class="n">candidate</span><span class="p">:</span><span class="n">Paper</span><span class="p">)</span><span class="o">-[</span><span class="p">:</span><span class="n">CITES</span><span class="o">]-&gt;</span><span class="p">(</span><span class="n">anchor</span><span class="p">:</span><span class="n">Paper</span><span class="w"> </span><span class="p">{</span><span class="n">title</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Attention Is All You Need&quot;</span><span class="p">})</span>
+<span class="k">RETURN</span><span class="w"> </span><span class="n">candidate</span><span class="p">.</span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="n">candidate</span><span class="p">.</span><span class="n">year</span>
+<span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">candidate</span><span class="p">.</span><span class="n">year</span><span class="w"> </span><span class="k">DESC</span>
+<span class="k">LIMIT</span><span class="w"> </span><span class="m">10</span>
+</code></pre></div>
+
+<p>The useful part is not just the syntax. It is that the query shape matches the graph shape. You ask for a pattern, not a stack of joins that only implies a pattern. If your retrieval question depends on who authored what, which paper cites which result, or which topic connects two otherwise distant papers, that difference becomes practical very quickly.</p>
+<p><img alt="The Neo4j property graph model - nodes, relationships, properties, labels" src="https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/002_neo4j_llamaindex/images/property_graph_model.png">
+<em>The graph is already there in storage. Query time is just following it.</em></p>
+<h2>Why a graph database fits knowledge graphs better than a relational one</h2>
+<p>A <strong>knowledge graph</strong> is not just a bag of facts. It is a representation where entities are stored as nodes and their connections are stored as typed edges, so the system can answer questions about how things relate, not only what text mentions them.</p>
+<p>You can model the same domain in Postgres. That part is not controversial.</p>
+<div class="codehilite"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">papers</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="w"> </span><span class="nb">TEXT</span><span class="p">,</span><span class="w"> </span><span class="k">year</span><span class="w"> </span><span class="nb">INT</span><span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">citations</span><span class="w"> </span><span class="p">(</span><span class="n">citing_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">REFERENCES</span><span class="w"> </span><span class="n">papers</span><span class="p">(</span><span class="n">id</span><span class="p">),</span><span class="w"> </span><span class="n">cited_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">REFERENCES</span><span class="w"> </span><span class="n">papers</span><span class="p">(</span><span class="n">id</span><span class="p">));</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authorships</span><span class="w"> </span><span class="p">(</span><span class="n">paper_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">REFERENCES</span><span class="w"> </span><span class="n">papers</span><span class="p">(</span><span class="n">id</span><span class="p">),</span><span class="w"> </span><span class="n">author_id</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">REFERENCES</span><span class="w"> </span><span class="n">authors</span><span class="p">(</span><span class="n">id</span><span class="p">));</span>
+</code></pre></div>
+
+<p>But the moment the query becomes relational, the database has to recover the path through repeated joins. Questions like these are where the difference starts to matter:</p>
+<ul>
+<li>Which papers cite Paper A?</li>
+<li>Which of those papers share an author with a paper tagged as retrieval augmentation?</li>
+<li>Which path actually proves that connection?</li>
+</ul>
+<p>In Postgres, that becomes a chain over citation, authorship, and topic tables. In Cypher, the same request is still expressed as the path itself:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">MATCH</span><span class="w"> </span><span class="p">(</span><span class="n">anchor</span><span class="p">:</span><span class="n">Paper</span><span class="w"> </span><span class="p">{</span><span class="n">openalex_id</span><span class="p">:</span><span class="w"> </span><span class="err">$</span><span class="n">anchor_id</span><span class="p">})</span>
+<span class="k">MATCH</span><span class="w"> </span><span class="p">(</span><span class="n">candidate</span><span class="p">:</span><span class="n">Paper</span><span class="p">)</span><span class="o">-[</span><span class="p">:</span><span class="n">CITES</span><span class="o">]-&gt;</span><span class="p">(</span><span class="n">anchor</span><span class="p">)</span>
+<span class="k">MATCH</span><span class="w"> </span><span class="p">(</span><span class="n">candidate</span><span class="p">)</span><span class="o">-[</span><span class="p">:</span><span class="n">AUTHORED_BY</span><span class="o">]-&gt;</span><span class="p">(</span><span class="n">bridge</span><span class="p">:</span><span class="n">Researcher</span><span class="p">)</span><span class="o">&lt;-[</span><span class="p">:</span><span class="n">AUTHORED_BY</span><span class="o">]-</span><span class="p">(</span><span class="n">rag_paper</span><span class="p">:</span><span class="n">Paper</span><span class="p">)</span>
+<span class="k">MATCH</span><span class="w"> </span><span class="p">(</span><span class="n">rag_paper</span><span class="p">)</span><span class="o">-[</span><span class="p">:</span><span class="n">TAGGED</span><span class="o">]-&gt;</span><span class="p">(:</span><span class="n">Topic</span><span class="w"> </span><span class="p">{</span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;retrieval augmentation&#39;</span><span class="p">})</span>
+<span class="k">RETURN</span><span class="w"> </span><span class="n">candidate</span><span class="p">.</span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="k">collect</span><span class="p">(</span><span class="k">DISTINCT</span><span class="w"> </span><span class="n">bridge</span><span class="p">.</span><span class="n">name</span><span class="p">)</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">bridge_authors</span>
+</code></pre></div>
+
+<p>The performance idea you need here is <strong>index-free adjacency</strong>. Neo4j describes this as a model where the database uses an index to find the starting node, then follows stored links between node and relationship records during traversal instead of reconstructing every hop through join tables (<a href="https://neo4j.com/graphacademy/training-overview-40/02-overview40-neo4j-graph-platform/">Neo4j Overview</a>). That is why graph databases are a natural fit when the dominant workload is multi-hop traversal instead of row aggregation. This does not make Neo4j universally better. It makes it a better fit for a specific query shape.</p>
+<ul>
+<li>If your workload is mostly semantic similarity over chunks, use a vector store.</li>
+<li>If your workload is mostly aggregates, filters, and tabular reporting, use a relational database.</li>
+<li>If your workload depends on typed paths across entities, a graph database earns its place quickly.</li>
+</ul>
+<p><img alt="The same question in SQL and Cypher - query complexity comparison" src="https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/002_neo4j_llamaindex/images/neo4j_vs_sql.png">
+<em>This is where row logic starts to fight a path-shaped question.</em></p>
+<h2>How LlamaIndex connects to Neo4j</h2>
+<p>LlamaIndex's Neo4j property-graph integration exposes Neo4j as the storage layer behind a property graph index (<a href="https://docs.llamaindex.ai/en/stable/api_reference/storage/graph_stores/neo4j/">LlamaIndex Docs</a>). At a high level, that integration does two jobs:</p>
+<ol>
+<li><strong>Execute</strong> Cypher against Neo4j for graph reads and writes.</li>
+<li><strong>Back</strong> a <code>PropertyGraphIndex</code> so extracted entities and relationships can be stored in a real graph database.</li>
+</ol>
+<p>That second part matters for GraphRAG. A <strong>PropertyGraphIndex</strong> is LlamaIndex's index structure for storing text-derived entities and relations in a property graph, so retrieval can use both document context and graph structure. In LlamaIndex's property-graph workflow, documents are chunked, <strong>path extractors</strong> pull entity-to-entity relationships from those chunks, and the result is written into Neo4j as nodes and typed edges (<a href="https://docs.llamaindex.ai/en/stable/examples/property_graph/property_graph_neo4j/">LlamaIndex example</a>). For this article, the graph construction is written by hand instead of delegating entity extraction to an LLM pipeline. That makes the mechanics easier to inspect and keeps the example grounded in the actual nodes and edges being inserted.</p>
+<div class="codehilite"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>llama-index-graph-stores-neo4j<span class="w"> </span>neo4j<span class="w"> </span>pandas<span class="w"> </span>requests<span class="w"> </span>scikit-learn
+</code></pre></div>
+
+<p>The local Neo4j container for the example looks like this:</p>
+<div class="codehilite"><pre><span></span><code>docker<span class="w"> </span>run<span class="w"> </span>--name<span class="w"> </span>neo4j-dev<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-p<span class="w"> </span><span class="m">7474</span>:7474<span class="w"> </span>-p<span class="w"> </span><span class="m">7687</span>:7687<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-e<span class="w"> </span><span class="nv">NEO4J_AUTH</span><span class="o">=</span>neo4j/password<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>neo4j:5
+</code></pre></div>
+
+<p>Then the Python side is just the store connection and a minimal connectivity check:</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">llama_index.graph_stores.neo4j</span><span class="w"> </span><span class="kn">import</span> <span class="n">Neo4jGraphStore</span>
+<span class="n">graph_store</span> <span class="o">=</span> <span class="n">Neo4jGraphStore</span><span class="p">(</span>
+    <span class="n">username</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;NEO4J_USER&quot;</span><span class="p">,</span> <span class="s2">&quot;neo4j&quot;</span><span class="p">),</span>
+    <span class="n">password</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;NEO4J_PASSWORD&quot;</span><span class="p">,</span> <span class="s2">&quot;password&quot;</span><span class="p">),</span>
+    <span class="n">url</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;NEO4J_URI&quot;</span><span class="p">,</span> <span class="s2">&quot;bolt://localhost:7687&quot;</span><span class="p">),</span>
+    <span class="n">database</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">&quot;NEO4J_DATABASE&quot;</span><span class="p">,</span> <span class="s2">&quot;neo4j&quot;</span><span class="p">),</span>
+    <span class="n">refresh_schema</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">graph_store</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="s2">&quot;RETURN 1 AS ok&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+<p><code>refresh_schema=False</code> skips a startup schema refresh. When you already know the graph shape, that avoids extra overhead before the first query.</p>
+<h2>Building the arXiv citation graph</h2>
+<p>OpenAlex's <code>Works</code> API is the source for the paper records in this notebook, including outgoing references and linked metadata (<a href="https://docs.openalex.org/api-entities/works">OpenAlex Docs</a>).</p>
+<p>The fetch in this example does four things:</p>
+<ol>
+<li><strong>Search</strong> topic areas related to retrieval and transformer literature.</li>
+<li><strong>Filter</strong> to records that are linked to arXiv.</li>
+<li><strong>Normalize</strong> each work into one consistent Python shape.</li>
+<li><strong>Load</strong> papers, authors, institutions, topics, and citation edges into Neo4j.</li>
+</ol>
+<p>The topic field is normalized from two sources: manual seed topics used to drive the fetch, and OpenAlex topic or concept identifiers attached to each returned work. After normalization, each paper record carries the fields the graph needs: the paper ID, basic paper metadata, author records, institution records, topic tags, and outgoing references.</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="n">OPENALEX_URL</span> <span class="o">=</span> <span class="s2">&quot;https://api.openalex.org/works&quot;</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">is_arxiv_linked</span><span class="p">(</span><span class="n">work</span><span class="p">):</span>
+    <span class="n">doi</span> <span class="o">=</span> <span class="p">(</span><span class="n">work</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;doi&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="k">if</span> <span class="s2">&quot;10.48550/arxiv&quot;</span> <span class="ow">in</span> <span class="n">doi</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    <span class="k">for</span> <span class="n">loc</span> <span class="ow">in</span> <span class="n">work</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;locations&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">[]:</span>
+        <span class="k">if</span> <span class="s2">&quot;arxiv.org&quot;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">loc</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;landing_page_url&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+            <span class="k">return</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="kc">False</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">fetch_seed_works</span><span class="p">(</span><span class="n">query_text</span><span class="p">,</span> <span class="n">pages</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">per_page</span><span class="o">=</span><span class="mi">100</span><span class="p">):</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">page</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">pages</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="n">params</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;search&quot;</span><span class="p">:</span> <span class="n">query_text</span><span class="p">,</span>
+            <span class="s2">&quot;filter&quot;</span><span class="p">:</span> <span class="s2">&quot;from_publication_date:2017-01-01,has_abstract:true&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;per-page&quot;</span><span class="p">:</span> <span class="n">per_page</span><span class="p">,</span>
+            <span class="s2">&quot;page&quot;</span><span class="p">:</span> <span class="n">page</span><span class="p">,</span>
+            <span class="s2">&quot;mailto&quot;</span><span class="p">:</span> <span class="s2">&quot;demo@example.com&quot;</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">OPENALEX_URL</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="n">params</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">60</span><span class="p">)</span>
+        <span class="n">r</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
+        <span class="n">rows</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">json</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;results&quot;</span><span class="p">,</span> <span class="p">[]))</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.2</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">rows</span>
+</code></pre></div>
+
+<p>The ingest step uses <code>MERGE</code>, which is Cypher's idempotent write pattern. It creates the node if it does not exist and matches it if it already does. That is what makes reruns safe when you are rebuilding the graph from the same source records.</p>
+<p>The constraint setup looks like this:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="n">CONSTRAINT</span><span class="w"> </span><span class="n">paper_id</span><span class="w"> </span><span class="n">IF</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="n">EXISTS</span><span class="w"> </span><span class="n">FOR</span><span class="w"> </span><span class="p">(</span><span class="n">p</span><span class="p">:</span><span class="n">Paper</span><span class="p">)</span><span class="w"> </span><span class="n">REQUIRE</span><span class="w"> </span><span class="n">p</span><span class="p">.</span><span class="n">openalex_id</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">UNIQUE</span><span class="p">;</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="n">CONSTRAINT</span><span class="w"> </span><span class="n">researcher_id</span><span class="w"> </span><span class="n">IF</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="n">EXISTS</span><span class="w"> </span><span class="n">FOR</span><span class="w"> </span><span class="p">(</span><span class="n">r</span><span class="p">:</span><span class="n">Researcher</span><span class="p">)</span><span class="w"> </span><span class="n">REQUIRE</span><span class="w"> </span><span class="n">r</span><span class="p">.</span><span class="n">author_id</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">UNIQUE</span><span class="p">;</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="n">CONSTRAINT</span><span class="w"> </span><span class="n">institution_id</span><span class="w"> </span><span class="n">IF</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="n">EXISTS</span><span class="w"> </span><span class="n">FOR</span><span class="w"> </span><span class="p">(</span><span class="n">i</span><span class="p">:</span><span class="n">Institution</span><span class="p">)</span><span class="w"> </span><span class="n">REQUIRE</span><span class="w"> </span><span class="n">i</span><span class="p">.</span><span class="n">institution_id</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">UNIQUE</span><span class="p">;</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="n">CONSTRAINT</span><span class="w"> </span><span class="n">topic_id</span><span class="w"> </span><span class="n">IF</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="n">EXISTS</span><span class="w"> </span><span class="n">FOR</span><span class="w"> </span><span class="p">(</span><span class="n">t</span><span class="p">:</span><span class="n">Topic</span><span class="p">)</span><span class="w"> </span><span class="n">REQUIRE</span><span class="w"> </span><span class="n">t</span><span class="p">.</span><span class="n">topic_id</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">UNIQUE</span><span class="p">;</span>
+</code></pre></div>
+
+<p>Then the Python ingest loop can stay small and mechanical:</p>
+<div class="codehilite"><pre><span></span><code><span class="k">for</span> <span class="n">paper</span> <span class="ow">in</span> <span class="n">graph_papers</span><span class="p">:</span>
+    <span class="n">graph_store</span><span class="o">.</span><span class="n">query</span><span class="p">(</span>
+        <span class="s2">&quot;MERGE (p:Paper {openalex_id: $paper_id}) &quot;</span>
+        <span class="s2">&quot;SET p.title = $title, p.year = $year, p.cited_by_count = $cited_by_count&quot;</span><span class="p">,</span>
+        <span class="n">param_map</span><span class="o">=</span><span class="p">{</span>
+            <span class="s2">&quot;paper_id&quot;</span><span class="p">:</span> <span class="n">paper</span><span class="p">[</span><span class="s2">&quot;openalex_id&quot;</span><span class="p">],</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="n">paper</span><span class="p">[</span><span class="s2">&quot;title&quot;</span><span class="p">],</span>
+            <span class="s2">&quot;year&quot;</span><span class="p">:</span> <span class="n">paper</span><span class="p">[</span><span class="s2">&quot;year&quot;</span><span class="p">],</span>
+            <span class="s2">&quot;cited_by_count&quot;</span><span class="p">:</span> <span class="n">paper</span><span class="p">[</span><span class="s2">&quot;cited_by_count&quot;</span><span class="p">],</span>
+        <span class="p">},</span>
+    <span class="p">)</span>
+</code></pre></div>
+
+<p>In the notebook run used for this article, the ingest produced roughly 450 arXiv-linked papers plus paper, researcher, institution, and topic nodes with around 15,000 citation edges. The point is not the absolute size. The point is that the graph is now queryable as a network rather than as a pile of paper records.</p>
+<h2>The multi-hop query</h2>
+<p><strong><em>This is the point where a graph backend stops being theoretical.</em></strong></p>
+<p>The core query asks for papers that cite "Attention Is All You Need" whose authors also published papers tagged as retrieval augmentation.</p>
+<div class="codehilite"><pre><span></span><code><span class="k">MATCH</span><span class="w"> </span><span class="p">(</span><span class="n">anchor</span><span class="p">:</span><span class="n">Paper</span><span class="w"> </span><span class="p">{</span><span class="n">openalex_id</span><span class="p">:</span><span class="w"> </span><span class="err">$</span><span class="n">attention_id</span><span class="p">})</span>
+<span class="k">MATCH</span><span class="w"> </span><span class="p">(</span><span class="n">candidate</span><span class="p">:</span><span class="n">Paper</span><span class="p">)</span><span class="o">-[</span><span class="p">:</span><span class="n">CITES</span><span class="o">]-&gt;</span><span class="p">(</span><span class="n">anchor</span><span class="p">)</span>
+<span class="k">MATCH</span><span class="w"> </span><span class="p">(</span><span class="n">candidate</span><span class="p">)</span><span class="o">-[</span><span class="p">:</span><span class="n">AUTHORED_BY</span><span class="o">]-&gt;</span><span class="p">(</span><span class="n">bridge</span><span class="p">:</span><span class="n">Researcher</span><span class="p">)</span><span class="o">&lt;-[</span><span class="p">:</span><span class="n">AUTHORED_BY</span><span class="o">]-</span><span class="p">(</span><span class="n">rag_paper</span><span class="p">:</span><span class="n">Paper</span><span class="p">)</span>
+<span class="k">MATCH</span><span class="w"> </span><span class="p">(</span><span class="n">rag_paper</span><span class="p">)</span><span class="o">-[</span><span class="p">:</span><span class="n">TAGGED</span><span class="o">]-&gt;</span><span class="p">(:</span><span class="n">Topic</span><span class="w"> </span><span class="p">{</span><span class="n">name</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;retrieval augmentation&#39;</span><span class="p">})</span>
+<span class="k">RETURN</span><span class="w"> </span><span class="n">candidate</span><span class="p">.</span><span class="n">title</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">citing_paper</span><span class="p">,</span>
+<span class="w">       </span><span class="n">candidate</span><span class="p">.</span><span class="n">year</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">year</span><span class="p">,</span>
+<span class="w">       </span><span class="k">collect</span><span class="p">(</span><span class="k">DISTINCT</span><span class="w"> </span><span class="n">bridge</span><span class="p">.</span><span class="n">name</span><span class="p">)</span><span class="o">[</span><span class="m">0</span><span class="p">..</span><span class="m">3</span><span class="o">]</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">bridge_authors</span><span class="p">,</span>
+<span class="w">       </span><span class="k">collect</span><span class="p">(</span><span class="k">DISTINCT</span><span class="w"> </span><span class="n">rag_paper</span><span class="p">.</span><span class="n">title</span><span class="p">)</span><span class="o">[</span><span class="m">0</span><span class="p">..</span><span class="m">3</span><span class="o">]</span><span class="w"> </span><span class="k">AS</span><span class="w"> </span><span class="n">related_rag_papers</span>
+<span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">year</span><span class="w"> </span><span class="k">DESC</span>
+<span class="k">LIMIT</span><span class="w"> </span><span class="m">20</span>
+</code></pre></div>
+
+<p>Here, the <code>bridge</code> researcher is simply the author node that connects the citing paper to a second paper in the retrieval-augmentation topic set. The retrieval path is easier to scan when written as hops:</p>
+<div class="codehilite"><pre><span></span><code>anchor paper
+-&gt; cited by candidate paper
+-&gt; authored by bridge researcher
+-&gt; also authored retrieval-augmentation paper
+</code></pre></div>
+
+<p>That is a <strong>multi-hop query</strong>. Multi-hop means the answer depends on following more than one relationship in sequence. A vector ranking system can retrieve papers that mention the right terms. It cannot prove that those papers satisfy this citation-plus-authorship path unless the path itself is encoded somewhere the retriever can traverse.</p>
+<p><img alt="Multi-hop traversal path in the arXiv citation graph" src="https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/002_neo4j_llamaindex/images/multihop_path.png">
+<em>Similarity can suggest the paper. Only the path can prove it.</em></p>
+<p>In Python, the execution is direct:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">ATTENTION_PAPER_ID</span> <span class="o">=</span> <span class="s2">&quot;https://openalex.org/W2626778328&quot;</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">graph_store</span><span class="o">.</span><span class="n">query</span><span class="p">(</span>
+    <span class="n">cypher_multihop</span><span class="p">,</span>
+    <span class="n">param_map</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;attention_id&quot;</span><span class="p">:</span> <span class="n">ATTENTION_PAPER_ID</span><span class="p">}</span>
+<span class="p">)</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">results</span><span class="p">)</span>
+</code></pre></div>
+
+<p>A representative row looks like this:</p>
+<div class="codehilite"><pre><span></span><code>citing_paper: &quot;Dense Passage Retrieval for Open-Domain Question Answering&quot;
+year: 2020
+bridge_authors: [&quot;Danqi Chen&quot;, &quot;Wen-tau Yih&quot;]
+related_rag_papers: [&quot;Open-domain question answering via contextual word vectors&quot;, ...]
+</code></pre></div>
+
+<h2>Validating results and comparing against a vector baseline</h2>
+<p>The validation pass reruns each returned title against the actual graph constraints:</p>
+<ol>
+<li><strong>Check</strong> that the paper exists.</li>
+<li><strong>Check</strong> that it cites the anchor paper.</li>
+<li><strong>Check</strong> that at least one author bridges to a retrieval-augmentation paper.</li>
+<li><strong>Reject</strong> any row that fails any part of that path.</li>
+</ol>
+<p>In the recorded notebook run used for this article, the graph query returned 18 rows and all 18 satisfied the full constraint set. Precision at 18 was 1.000. The comparison baseline uses TF-IDF cosine similarity over paper titles for the query text "papers that cite attention is all you need with co-authors active in retrieval augmentation."</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.feature_extraction.text</span><span class="w"> </span><span class="kn">import</span> <span class="n">TfidfVectorizer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">sklearn.metrics.pairwise</span><span class="w"> </span><span class="kn">import</span> <span class="n">cosine_similarity</span>
+<span class="n">corpus</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span><span class="p">[</span><span class="s2">&quot;title&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">graph_papers</span> <span class="k">if</span> <span class="n">p</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;title&quot;</span><span class="p">)]</span>
+<span class="n">query</span> <span class="o">=</span> <span class="s2">&quot;papers that cite attention is all you need with co-authors active in retrieval augmentation&quot;</span>
+<span class="n">tfidf</span> <span class="o">=</span> <span class="n">TfidfVectorizer</span><span class="p">(</span><span class="n">stop_words</span><span class="o">=</span><span class="s2">&quot;english&quot;</span><span class="p">)</span>
+<span class="n">matrix</span> <span class="o">=</span> <span class="n">tfidf</span><span class="o">.</span><span class="n">fit_transform</span><span class="p">(</span><span class="n">corpus</span><span class="p">)</span>
+<span class="n">scores</span> <span class="o">=</span> <span class="n">cosine_similarity</span><span class="p">(</span><span class="n">tfidf</span><span class="o">.</span><span class="n">transform</span><span class="p">([</span><span class="n">query</span><span class="p">]),</span> <span class="n">matrix</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+</code></pre></div>
+
+<p>In that same run, the vector top-20 match rate was 0.15. Most of the high-scoring titles reused words like "attention", "retrieval", or "augmentation" but did not satisfy the citation and authorship constraints. That is the core contrast:</p>
+<ul>
+<li>Vector search is good at semantic resemblance.</li>
+<li>Graph traversal is good at relational validity.</li>
+</ul>
+<p>The caveat is straightforward. This is a small corpus and one anchor paper. The exact metric values will move on a different sample, but the mechanism survives the example: similarity and path validity are different retrieval signals.</p>
+<h2>When to use Neo4j and when not to</h2>
+<p>Use Neo4j when your retrieval questions sound like this:</p>
+<ul>
+<li>Which papers cite this result through the same bridge author?</li>
+<li>Which institutions connect researchers across both topic clusters?</li>
+<li>Which entity chain explains why these two documents belong together?</li>
+</ul>
+<p>Those are graph questions. Do not use Neo4j just because a graph looks sophisticated on a slide.</p>
+<ul>
+<li>For pure top-k semantic retrieval over chunks, a vector store is usually the simpler fit.</li>
+<li>For aggregates, dashboards, and row-heavy analytics, a relational database is often the better fit.</li>
+<li>For GraphRAG systems that need both local semantic retrieval and relationship-aware traversal, the graph store and the vector index complement each other.</li>
+</ul>
+<p>Neo4j also brings operational cost. You need a running database, persistent storage, a Bolt endpoint, and real lifecycle management once the project moves beyond a notebook. That cost is justified when the graph answers questions the vector path cannot. The full notebook behind this article includes the OpenAlex fetch, graph construction, multi-hop query, validation, and vector baseline comparison.</p>
+<hr>
+<p><em>Next: the repeated infrastructure cost hidden inside every "just run Neo4j first" tutorial, and why that friction keeps showing up before the interesting part of the experiment even starts.</em></p>
+  </main>
+</body>
+</html>
