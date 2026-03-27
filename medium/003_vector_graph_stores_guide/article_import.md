@@ -1,7 +1,7 @@
-![A field guide to LlamaIndex vector and graph stores — hero banner](https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/title.png)
-
 # A field guide to vector and graph stores in LlamaIndex: Neo4j, pgvector, Qdrant, and OpenSearch
 *When to use each one, what the local setup looks like, and where each fits in production*
+
+![A field guide to LlamaIndex vector and graph stores — hero banner](https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/title.png)
 
 ---
 
