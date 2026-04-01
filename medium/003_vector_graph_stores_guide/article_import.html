@@ -5,151 +5,51 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>A field guide to vector and graph stores in LlamaIndex: Neo4j, pgvector, Qdrant, and OpenSearch</title>
   <meta name="description" content="The LlamaIndex documentation lists over forty storage integrations. In practice, if you are building a GraphRAG or RAG pipeline with a local development…">
-  <style>
-    :root {
-      color-scheme: light;
-      --page-bg: #f4f2ec;
-      --paper-bg: #ffffff;
-      --ink: #1f1f1b;
-      --muted: #5e5a50;
-      --accent: #0f766e;
-      --rule: #e6e0d2;
-      --code-bg: #f7f7f2;
-    }
-    * {
-      box-sizing: border-box;
-    }
-    body {
-      margin: 0;
-      background:
-        radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 28%),
-        linear-gradient(180deg, #efe9dc 0%, var(--page-bg) 24%, #f8f7f3 100%);
-      color: var(--ink);
-      font-family: Georgia, "Times New Roman", serif;
-      line-height: 1.75;
-    }
-    main {
-      max-width: 780px;
-      margin: 0 auto;
-      padding: 56px 28px 96px;
-      background: rgba(255, 255, 255, 0.88);
-      backdrop-filter: blur(4px);
-      min-height: 100vh;
-    }
-    h1, h2, h3, h4, h5, h6 {
-      color: #111111;
-      font-family: Arial, Helvetica, sans-serif;
-      line-height: 1.22;
-      margin-bottom: 0.9rem;
-    }
-    h1 {
-      font-size: clamp(2.2rem, 3.8vw, 3.1rem);
-      margin-top: 0;
-    }
-    h2 {
-      font-size: 1.7rem;
-      margin-top: 3rem;
-    }
-    h3 {
-      font-size: 1.3rem;
-      margin-top: 2.4rem;
-    }
-    p, li {
-      font-size: 1.08rem;
-    }
-    p {
-      margin: 1rem 0;
-    }
-    hr {
-      border: 0;
-      border-top: 1px solid var(--rule);
-      margin: 2.2rem 0;
-    }
-    a {
-      color: var(--accent);
-    }
-    img {
-      display: block;
-      width: 100%;
-      height: auto;
-      margin: 1.8rem 0 0.7rem;
-      border-radius: 8px;
-    }
-    blockquote {
-      margin: 1.8rem 0;
-      padding: 0.3rem 0 0.3rem 1.2rem;
-      border-left: 3px solid #c7d5d4;
-      color: var(--muted);
-    }
-    pre {
-      overflow-x: auto;
-      background: var(--code-bg);
-      border: 1px solid var(--rule);
-      border-radius: 10px;
-      padding: 18px 20px;
-      font-size: 0.95rem;
-      line-height: 1.55;
-    }
-    code {
-      font-family: Consolas, "SFMono-Regular", Menlo, monospace;
-    }
-    p code, li code {
-      background: var(--code-bg);
-      padding: 0.12rem 0.34rem;
-      border-radius: 4px;
-      font-size: 0.92em;
-    }
-    ul, ol {
-      padding-left: 1.45rem;
-    }
-    @media (max-width: 768px) {
-      main {
-        padding: 32px 18px 72px;
-      }
-      p, li {
-        font-size: 1rem;
-      }
-    }
-  </style>
 </head>
 <body>
-  <main>
+  <article>
 <h1>A field guide to vector and graph stores in LlamaIndex: Neo4j, pgvector, Qdrant, and OpenSearch</h1>
-<img src="https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/title.png" alt="A field guide to LlamaIndex vector and graph stores — hero banner">
+<p><em>When to use each one, what the local setup looks like, and where each fits in production</em></p>
+<img src="https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/images/title.png" alt="A field guide to LlamaIndex vector and graph stores — hero banner">
 <hr>
 <p>The LlamaIndex documentation lists over forty storage integrations. In practice, if you are building a GraphRAG or RAG pipeline with a local development workflow, you are choosing from a much shorter list. Four stores cover the meaningful ground: Neo4j for knowledge graphs, pgvector for SQL-native vector search, Qdrant for purpose-built vector indexing, and OpenSearch for hybrid text-plus-vector retrieval.</p>
 <p>This post covers those four. For each one: what it actually stores, when it is the right fit, what the local Docker setup looks like, how you connect it through LlamaIndex, and what the production deployment path is. The goal is a reference you can return to when a new pipeline needs a storage decision — not a ranking, not a benchmark, not a verdict about which one wins.</p>
 <p>Selection criteria: I picked stores that (1) have a maintained LlamaIndex integration, (2) have a well-understood local Docker setup, and (3) map to meaningfully different use cases. Chroma and Milvus Lite are excluded because they are better fits for rapid prototyping with ephemeral data than for pipelines you intend to deploy. Weaviate and Pinecone are excluded because their local development story requires more infrastructure than the four covered here.</p>
-<img src="https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/store_comparison.png" alt="Neo4j, pgvector, Qdrant, OpenSearch — store comparison table">
+<img src="https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/images/store_comparison.png" alt="Neo4j, pgvector, Qdrant, OpenSearch — store comparison table">
 <hr>
 <h2>Neo4j: graph database for knowledge graphs and GraphRAG</h2>
 <p><strong>What it is:</strong> A native graph database. Data is stored as nodes, relationships, and properties — not tables. Queries are written in Cypher, which describes the graph patterns you want to find.</p>
-<p><strong>When to use it:</strong> When your retrieval questions are about relationships between entities, not just semantic proximity. The canonical use case is GraphRAG with LlamaIndex&#x27;s <code>PropertyGraphIndex</code>: entity extraction from documents, knowledge graph construction, community detection, and multi-hop retrieval queries like &quot;find papers that cite this author and were also tagged with this topic.&quot; If your questions require following chains of connections across a corpus, Neo4j is the right backend. If they are primarily similarity lookups, it is not.</p>
+<p><strong>When to use it:</strong> When your retrieval questions are about relationships between entities, not just semantic proximity. The canonical use case is GraphRAG with LlamaIndex’s <code>PropertyGraphIndex</code>: entity extraction from documents, knowledge graph construction, community detection, and multi-hop retrieval queries like “find papers that cite this author and were also tagged with this topic.” If your questions require following chains of connections across a corpus, Neo4j is the right backend. If they are primarily similarity lookups, it is not.</p>
 <p><strong>Local Docker setup:</strong></p>
-<pre><code>docker run --name neo4j-dev \
+<pre>docker run --name neo4j-dev \
   -p 7474:7474 -p 7687:7687 \
   -e NEO4J_AUTH=neo4j/password \
-  neo4j:5</code></pre>
+  neo4j:5
+</pre>
 <p>Port 7474 is the browser UI (useful for inspecting the graph). Port 7687 is the Bolt protocol endpoint that LlamaIndex connects to. The first run pulls the image and initializes the database, which takes 20–30 seconds. You can verify it is ready by opening <code>http://localhost:7474</code> or running:</p>
-<pre><code>docker exec neo4j-dev cypher-shell -u neo4j -p password &quot;RETURN 1 AS ok&quot;</code></pre>
+<pre>docker exec neo4j-dev cypher-shell -u neo4j -p password &quot;RETURN 1 AS ok&quot;
+</pre>
 <p><strong>LlamaIndex connection:</strong></p>
-<pre><code>pip install llama-index-graph-stores-neo4j neo4j</code></pre>
-<pre><code>from llama_index.graph_stores.neo4j import Neo4jGraphStore
+<pre>pip install llama-index-graph-stores-neo4j neo4j
+</pre>
+<pre>from llama_index.graph_stores.neo4j import Neo4jGraphStore
 
 graph_store = Neo4jGraphStore(
     username=&quot;neo4j&quot;,
     password=&quot;password&quot;,
     url=&quot;bolt://localhost:7687&quot;,
     database=&quot;neo4j&quot;,
-)</code></pre>
+)
+</pre>
 <p>For GraphRAG V2, pass the store to <code>PropertyGraphIndex</code>:</p>
-<pre><code>from llama_index.core import PropertyGraphIndex
+<pre>from llama_index.core import PropertyGraphIndex
 
 index = PropertyGraphIndex.from_documents(
     documents,
     graph_store=graph_store,
     show_progress=True,
-)</code></pre>
+)
+</pre>
 <p><strong>Production path:</strong> Neo4j Aura (managed cloud). Swap <code>url</code> from <code>bolt://localhost:7687</code> to your Aura connection string. The rest of the code is unchanged. Aura Free tier is available for development. Aura Professional supports production workloads.</p>
 <p><strong>Verdict:</strong> The strongest fit for knowledge graph construction and GraphRAG. The wrong choice for pure similarity search — there is no native vector index in the base <code>Neo4jGraphStore</code>. (Neo4j does support vector indexing via <code>Neo4jPropertyGraphStore</code> with embeddings stored on nodes, but that is a separate integration with a different tradeoff profile.)</p>
 <hr>
@@ -157,17 +57,20 @@ index = PropertyGraphIndex.from_documents(
 <p><strong>What it is:</strong> A PostgreSQL extension that adds a <code>vector</code> column type and approximate nearest-neighbor index support. You get vector search inside a database you already know how to operate, with full SQL available alongside it.</p>
 <p><strong>When to use it:</strong> When your application already uses PostgreSQL, or when you want to store structured metadata alongside vectors and filter on it using SQL. The <code>PGVectorStore</code> in LlamaIndex supports metadata filters and hybrid search (vector similarity + keyword match). If your team knows Postgres and your data has relational structure that matters for filtering, pgvector removes one infrastructure dependency from your stack.</p>
 <p><strong>Local Docker setup:</strong></p>
-<pre><code>docker run --name pgvector-dev \
+<pre>docker run --name pgvector-dev \
   -p 5432:5432 \
   -e POSTGRES_USER=testuser \
   -e POSTGRES_PASSWORD=testpassword \
   -e POSTGRES_DB=vectordb \
-  pgvector/pgvector:pg16</code></pre>
+  pgvector/pgvector:pg16
+</pre>
 <p>The <code>pgvector/pgvector:pg16</code> image ships with the extension pre-installed. After the container starts, the extension still needs to be activated in the target database:</p>
-<pre><code>docker exec -it pgvector-dev psql -U testuser -d vectordb -c &quot;CREATE EXTENSION IF NOT EXISTS vector;&quot;</code></pre>
+<pre>docker exec -it pgvector-dev psql -U testuser -d vectordb -c &quot;CREATE EXTENSION IF NOT EXISTS vector;&quot;
+</pre>
 <p><strong>LlamaIndex connection:</strong></p>
-<pre><code>pip install llama-index-vector-stores-postgres psycopg2-binary pgvector</code></pre>
-<pre><code>from llama_index.vector_stores.postgres import PGVectorStore
+<pre>pip install llama-index-vector-stores-postgres psycopg2-binary pgvector
+</pre>
+<pre>from llama_index.vector_stores.postgres import PGVectorStore
 
 vector_store = PGVectorStore.from_params(
     database=&quot;vectordb&quot;,
@@ -176,23 +79,26 @@ vector_store = PGVectorStore.from_params(
     port=5432,
     user=&quot;testuser&quot;,
     table_name=&quot;llamaindex_vectors&quot;,
-    embed_dim=1536,  # match your embedding model&#x27;s output dimension
-)</code></pre>
+    embed_dim=1536,  # match your embedding model's output dimension
+)
+</pre>
 <p><strong>Production path:</strong> Any managed PostgreSQL with the pgvector extension enabled. Supabase (free tier available, pgvector on by default), Neon (serverless Postgres, pgvector supported), Amazon RDS for PostgreSQL (pgvector available from PostgreSQL 15+), or Google Cloud SQL. For teams already on AWS or GCP with an existing RDS instance, adding a <code>vector</code> column to an existing database is often the path of least resistance.</p>
-<p><strong>Verdict:</strong> The most familiar option for teams with existing Postgres infrastructure. The right choice when you need to join vector results with structured data in the same query. Not the best choice for very large vector collections (&gt;10M embeddings) where purpose-built ANN indexes (HNSW in Qdrant) will outperform PostgreSQL&#x27;s ivfflat.</p>
+<p><strong>Verdict:</strong> The most familiar option for teams with existing Postgres infrastructure. The right choice when you need to join vector results with structured data in the same query. Not the best choice for very large vector collections (&gt;10M embeddings) where purpose-built ANN indexes (HNSW in Qdrant) will outperform PostgreSQL’s ivfflat.</p>
 <hr>
 <h2>Qdrant: purpose-built vector search</h2>
 <p><strong>What it is:</strong> A vector database built specifically for approximate nearest-neighbor search. Uses HNSW (Hierarchical Navigable Small World) indexing as its default, with payload filtering that runs inside the ANN search rather than as a post-filter.</p>
-<p><strong>When to use it:</strong> When vector similarity search is the primary operation and you need it to be fast at scale. Qdrant&#x27;s payload filtering is applied during the HNSW traversal, which means filtering on metadata (date range, category, source document) does not degrade recall the way post-filtering does. If you are building a semantic search API over a large corpus with rich metadata, Qdrant is the strongest fit in this list for that specific workload.</p>
+<p><strong>When to use it:</strong> When vector similarity search is the primary operation and you need it to be fast at scale. Qdrant’s payload filtering is applied during the HNSW traversal, which means filtering on metadata (date range, category, source document) does not degrade recall the way post-filtering does. If you are building a semantic search API over a large corpus with rich metadata, Qdrant is the strongest fit in this list for that specific workload.</p>
 <p><strong>Local Docker setup:</strong></p>
-<pre><code>docker run --name qdrant-dev \
+<pre>docker run --name qdrant-dev \
   -p 6333:6333 \
   -p 6334:6334 \
-  qdrant/qdrant</code></pre>
+  qdrant/qdrant
+</pre>
 <p>Port 6333 is the REST API and browser dashboard. Port 6334 is the gRPC endpoint. The dashboard at <code>http://localhost:6333/dashboard</code> shows collections, vectors, and payload counts — useful for inspecting what LlamaIndex has stored.</p>
 <p><strong>LlamaIndex connection:</strong></p>
-<pre><code>pip install llama-index-vector-stores-qdrant qdrant-client</code></pre>
-<pre><code>from qdrant_client import QdrantClient
+<pre>pip install llama-index-vector-stores-qdrant qdrant-client
+</pre>
+<pre>from qdrant_client import QdrantClient
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 
 client = QdrantClient(host=&quot;localhost&quot;, port=6333)
@@ -200,29 +106,34 @@ client = QdrantClient(host=&quot;localhost&quot;, port=6333)
 vector_store = QdrantVectorStore(
     client=client,
     collection_name=&quot;my_documents&quot;,
-)</code></pre>
+)
+</pre>
 <p><strong>Production path:</strong> Qdrant Cloud (managed, free tier available at 1GB storage). Self-hosted Qdrant on Kubernetes is also well-documented for teams that need to keep data on-premise. The same <code>QdrantClient</code> constructor accepts a cloud URL and API key:</p>
-<pre><code>client = QdrantClient(
+<pre>client = QdrantClient(
     url=&quot;https://your-cluster.qdrant.io&quot;,
     api_key=&quot;your-api-key&quot;,
-)</code></pre>
-<p><strong>Verdict:</strong> The strongest pure vector search option in this list at scale. The HNSW + payload filter combination is Qdrant&#x27;s primary differentiation from pgvector. The tradeoff is that it is a single-purpose service: if your pipeline later needs relational queries over the same data, you are running two stores.</p>
+)
+</pre>
+<p><strong>Verdict:</strong> The strongest pure vector search option in this list at scale. The HNSW + payload filter combination is Qdrant’s primary differentiation from pgvector. The tradeoff is that it is a single-purpose service: if your pipeline later needs relational queries over the same data, you are running two stores.</p>
 <hr>
 <h2>OpenSearch: hybrid text and vector search</h2>
 <p><strong>What it is:</strong> A fork of Elasticsearch (Apache 2.0 licensed). Stores documents with an inverted index for full-text search, plus an approximate nearest-neighbor index for dense vector search. Supports hybrid scoring that combines BM25 keyword relevance with vector similarity in a single query.</p>
-<p><strong>When to use it:</strong> When your retrieval pipeline needs both keyword precision and semantic recall. The canonical case is a RAG system over technical documentation or code where exact-match queries (&quot;what is the return type of function X&quot;) should rank highly alongside semantic queries (&quot;how does the authentication system work&quot;). Hybrid search handles both in one store, one query. It is also the natural fit for teams migrating from Elasticsearch.</p>
+<p><strong>When to use it:</strong> When your retrieval pipeline needs both keyword precision and semantic recall. The canonical case is a RAG system over technical documentation or code where exact-match queries (“what is the return type of function X”) should rank highly alongside semantic queries (“how does the authentication system work”). Hybrid search handles both in one store, one query. It is also the natural fit for teams migrating from Elasticsearch.</p>
 <p><strong>Local Docker setup:</strong></p>
-<pre><code>docker run --name opensearch-dev \
+<pre>docker run --name opensearch-dev \
   -p 9200:9200 \
   -p 9600:9600 \
   -e &quot;discovery.type=single-node&quot; \
   -e &quot;DISABLE_SECURITY_PLUGIN=true&quot; \
-  opensearchproject/opensearch:2.11.0</code></pre>
+  opensearchproject/opensearch:2.11.0
+</pre>
 <p><code>DISABLE_SECURITY_PLUGIN=true</code> skips TLS certificate setup for local development. Do not use this flag in production. The container takes 30–45 seconds to be ready. Check with:</p>
-<pre><code>curl http://localhost:9200/_cluster/health</code></pre>
+<pre>curl http://localhost:9200/_cluster/health
+</pre>
 <p><strong>LlamaIndex connection:</strong></p>
-<pre><code>pip install llama-index-vector-stores-opensearch opensearch-py</code></pre>
-<pre><code>from llama_index.vector_stores.opensearch import (
+<pre>pip install llama-index-vector-stores-opensearch opensearch-py
+</pre>
+<pre>from llama_index.vector_stores.opensearch import (
     OpensearchVectorStore,
     OpensearchVectorClient,
 )
@@ -235,22 +146,23 @@ client = OpensearchVectorClient(
     text_field=&quot;content&quot;,
 )
 
-vector_store = OpensearchVectorStore(client)</code></pre>
+vector_store = OpensearchVectorStore(client)
+</pre>
 <p><strong>Production path:</strong> Amazon OpenSearch Service (managed, integrates with existing AWS infrastructure). OpenSearch Serverless is available for workloads with unpredictable traffic. Self-hosted OpenSearch clusters are common in enterprises with data residency requirements.</p>
 <p><strong>Verdict:</strong> The right choice when keyword search precision matters alongside semantic recall, or when the team is already operating an Elasticsearch/OpenSearch cluster. The local Docker image is the heaviest of the four options here (the single-node container uses 1–2GB RAM at startup), which is a meaningful operational cost for local development sessions.</p>
 <hr>
 <h2>How to choose</h2>
 <p>The choice depends on two questions: what kind of retrieval do you need, and what does your infrastructure already look like.</p>
-<img src="https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/decision_tree.png" alt="Store selection decision tree — choosing a backend for your pipeline">
+<img src="https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/images/decision_tree.png" alt="Store selection decision tree — choosing a backend for your pipeline">
 <p><strong>Use Neo4j</strong> when: your queries are about relationships between entities. You are building GraphRAG, a knowledge graph, or a pipeline where multi-hop traversal is the primary retrieval mechanism.</p>
 <p><strong>Use pgvector</strong> when: your team already runs PostgreSQL, or you need to join vector results with structured relational data. Best for medium-scale deployments where simplicity and familiarity matter.</p>
 <p><strong>Use Qdrant</strong> when: similarity search is the primary operation and scale matters. Best for semantic search APIs over large corpora with rich metadata filtering requirements.</p>
 <p><strong>Use OpenSearch</strong> when: you need hybrid text-plus-vector retrieval, or you are already running an Elasticsearch cluster.</p>
-<p>The four stores are not mutually exclusive in a production pipeline. LlamaIndex&#x27;s <code>RouterQueryEngine</code> can dispatch queries to different stores based on the query type — routing graph traversal queries to Neo4j and similarity queries to Qdrant, for example. The field guide framing here is meant for choosing the primary store for a given pipeline, not for choosing a single store for all use cases forever.</p>
+<p>The four stores are not mutually exclusive in a production pipeline. LlamaIndex’s <code>RouterQueryEngine</code> can dispatch queries to different stores based on the query type — routing graph traversal queries to Neo4j and similarity queries to Qdrant, for example. The field guide framing here is meant for choosing the primary store for a given pipeline, not for choosing a single store for all use cases forever.</p>
 <p>One thing all four have in common: getting any of them running locally requires a <code>docker run</code> command before you can write a single line of retrieval logic. That setup step is not in the LlamaIndex documentation. It is in the Docker Hub pages, the individual store documentation, and scattered across community tutorials. The next post addresses that directly: what it looks like when the Python import handles it for you.</p>
 <hr>
 <p><em>Next: one import swap — spinning up a local Neo4j GraphRAG pipeline without leaving Python.</em></p>
 <hr>
-  </main>
+  </article>
 </body>
 </html>

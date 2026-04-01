@@ -1,7 +1,7 @@
 # A field guide to vector and graph stores in LlamaIndex: Neo4j, pgvector, Qdrant, and OpenSearch
 *When to use each one, what the local setup looks like, and where each fits in production*
 
-![A field guide to LlamaIndex vector and graph stores — hero banner](https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/title.png)
+![A field guide to LlamaIndex vector and graph stores — hero banner](https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/images/title.png)
 
 ---
 
@@ -11,7 +11,7 @@ This post covers those four. For each one: what it actually stores, when it is t
 
 Selection criteria: I picked stores that (1) have a maintained LlamaIndex integration, (2) have a well-understood local Docker setup, and (3) map to meaningfully different use cases. Chroma and Milvus Lite are excluded because they are better fits for rapid prototyping with ephemeral data than for pipelines you intend to deploy. Weaviate and Pinecone are excluded because their local development story requires more infrastructure than the four covered here.
 
-![Neo4j, pgvector, Qdrant, OpenSearch — store comparison table](https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/store_comparison.png)
+![Neo4j, pgvector, Qdrant, OpenSearch — store comparison table](https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/images/store_comparison.png)
 
 ---
 
@@ -224,7 +224,7 @@ vector_store = OpensearchVectorStore(client)
 
 The choice depends on two questions: what kind of retrieval do you need, and what does your infrastructure already look like.
 
-![Store selection decision tree — choosing a backend for your pipeline](https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/decision_tree.png)
+![Store selection decision tree — choosing a backend for your pipeline](https://raw.githubusercontent.com/amadou-6e/blog-components/main/medium/003_vector_graph_stores_guide/images/images/decision_tree.png)
 
 **Use Neo4j** when: your queries are about relationships between entities. You are building GraphRAG, a knowledge graph, or a pipeline where multi-hop traversal is the primary retrieval mechanism.
 
